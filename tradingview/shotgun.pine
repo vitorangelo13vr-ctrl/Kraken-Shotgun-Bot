@@ -23,7 +23,6 @@ fecharContrario = input.bool(true, "Fechar no sinal contrario", group="Gestao de
 mostrarLinhas = input.bool(true, "Mostrar linhas de SL e TP", group="Gestao de Risco")
 mostrarQuadro = input.bool(true, "Mostrar quadro", group="Quadro")
 
-// AlphaTrend calculation
 atr = ta.sma(ta.tr, ap)
 upTrend = low - atr * coeff
 downTrend = high + atr * coeff
@@ -34,7 +33,6 @@ if condicaoAlta
 else
     alphaTrend := math.max(downTrend, nz(alphaTrend[1], downTrend))
 
-// Signals
 compraBase = ta.crossover(alphaTrend, alphaTrend[2])
 vendaBase = ta.crossunder(alphaTrend, alphaTrend[2])
 ultimaCompra = ta.barssince(compraBase)
@@ -42,10 +40,9 @@ ultimaVenda = ta.barssince(vendaBase)
 compra = compraBase and (na(ultimaVenda) or ultimaCompra < ultimaVenda)
 venda = vendaBase and (na(ultimaCompra) or ultimaVenda < ultimaCompra)
 
-// JSON event messages carry a unique bar/action ID for webhook deduplication.
-// This shared secret is a bearer credential; keep the chart/script private.
+// Include the Kraken contract identifier and chart interval for backend checks.
 jsonAlert(string action, string suffix) =>
-    '{"secret":"' + webhookSecret + '","action":"' + action + '","event_id":"' + syminfo.tickerid + '-' + timeframe.period + '-' + str.tostring(time) + '-' + suffix + '","reference_price":' + str.tostring(close, format.mintick) + '}'
+    '{"secret":"' + webhookSecret + '","market":"PI_XBTUSD","timeframe":"' + timeframe.period + '","action":"' + action + '","event_id":"' + syminfo.tickerid + '-' + timeframe.period + '-' + str.tostring(time) + '-' + suffix + '","reference_price":' + str.tostring(close, format.mintick) + '}'
 
 if compra
     if fecharContrario and strategy.position_size < 0
@@ -56,8 +53,7 @@ if venda
         strategy.close("Long", comment="Close long", alert_message=jsonAlert("close_long", "close-long"))
     strategy.entry("Short", strategy.short, comment="SHOTGUN SELL", alert_message=jsonAlert("sell", "sell"))
 
-// These exits are TradingView-triggered market-close alerts, not exchange-side
-// resting stops. Webhook/network outages can prevent the intended close.
+// These are TradingView-triggered market-close alerts, not exchange-side stops.
 entrada = strategy.position_avg_price
 stopLong = entrada * (1.0 - stopPercent / 100.0)
 alvoLong = entrada * (1.0 + alvoPercent / 100.0)

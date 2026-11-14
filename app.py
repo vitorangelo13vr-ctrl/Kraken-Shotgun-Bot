@@ -27,6 +27,7 @@ KRAKEN_API_SECRET = os.getenv("KRAKEN_FUTURES_API_SECRET", "")
 LIVE_TRADING = os.getenv("ENABLE_LIVE_TRADING", "false").lower() == "true"
 KRAKEN_BASE_URL = os.getenv("KRAKEN_FUTURES_BASE_URL", "https://futures.kraken.com").rstrip("/")
 SYMBOL = os.getenv("KRAKEN_FUTURES_SYMBOL", "PI_XBTUSD")
+TIMEFRAME = "5"
 ORDER_ENDPOINT = "/derivatives/api/v3/sendorder"
 POSITIONS_ENDPOINT = "/derivatives/api/v3/openpositions"
 DB_PATH = os.getenv("IDEMPOTENCY_DB", "shotgun-events.sqlite3")
@@ -130,7 +131,6 @@ def _contracts_for_risk(reference_price: float) -> int:
         raise RuntimeError("Invalid risk configuration")
     if not 0 < STOP_LOSS_PCT < 100:
         raise RuntimeError("STOP_LOSS_PCT must be between 0 and 100")
-    # Approximate USD loss per inverse contract at the configured stop distance.
     risk_per_contract = CONTRACT_VALUE_USD * STOP_LOSS_PCT / 100.0
     risk_limited = math.floor(RISK_PER_TRADE_USD / risk_per_contract)
     notional_limited = math.floor(MAX_ORDER_NOTIONAL_USD / CONTRACT_VALUE_USD)
@@ -149,7 +149,7 @@ def _send_order(side: str, size: int, reduce_only: bool) -> dict[str, Any]:
 
 @app.get("/healthz")
 def health():
-    return jsonify(ok=True, mode="live" if LIVE_TRADING else "dry-run", symbol=SYMBOL)
+    return jsonify(ok=True, mode="live" if LIVE_TRADING else "dry-run", symbol=SYMBOL, timeframe="5m")
 
 
 @app.post("/webhook")
@@ -162,6 +162,10 @@ def webhook():
     supplied_secret = payload.pop("secret", "")
     if not isinstance(supplied_secret, str) or not hmac.compare_digest(supplied_secret, WEBHOOK_SECRET):
         return jsonify(error="Unauthorized"), 401
+    if payload.get("market") != SYMBOL:
+        return jsonify(error="Alert market does not match configured Kraken Futures contract"), 400
+    if payload.get("timeframe") != TIMEFRAME:
+        return jsonify(error="This bot only accepts 5-minute strategy alerts"), 400
 
     action = payload.get("action")
     if action not in {"buy", "sell", "close_long", "close_short"}:
@@ -186,7 +190,6 @@ def webhook():
             side, reduce_only = ("buy" if action == "buy" else "sell"), False
             expected_position = "flat"
         else:
-            reference_price = None
             size = 0
             side, reduce_only = ("sell", True) if action == "close_long" else ("buy", True)
             expected_position = "long" if action == "close_long" else "short"
@@ -199,9 +202,8 @@ def webhook():
             if not size:
                 size = int(os.getenv("DRY_RUN_CLOSE_SIZE", "1"))
                 order["size"] = size
-            result = {"ok": True, "mode": "dry-run", "order": order, "risk_per_trade_usd": RISK_PER_TRADE_USD}
+            result = {"ok": True, "mode": "dry-run", "order": order, "timeframe": "5m", "risk_per_trade_usd": RISK_PER_TRADE_USD}
         else:
-            # Always check actual exchange state immediately before execution.
             position = _open_position()
             if expected_position == "flat":
                 if position is not None:
@@ -212,7 +214,7 @@ def webhook():
                 size = position["size"]
                 order["size"] = size
             exchange = _send_order(side, size, reduce_only)
-            result = {"ok": True, "mode": "live", "order": order, "exchange": exchange}
+            result = {"ok": True, "mode": "live", "order": order, "exchange": exchange, "timeframe": "5m"}
         _finish_event(event_id, result)
         return jsonify(result), 200
     except (ValueError, RuntimeError) as exc:
@@ -222,7 +224,6 @@ def webhook():
         return jsonify(response), 409
     except Exception:
         log.exception("Unexpected webhook processing failure for event %s", event_id)
-        # The event remains claimed: replaying it automatically could duplicate an order.
         return jsonify(error="Unexpected failure; event is locked to prevent duplicate execution"), 500
 
 
@@ -232,5 +233,4 @@ def too_large(_error):
 
 
 if __name__ == "__main__":
-    # Use a production WSGI server (e.g. gunicorn) behind HTTPS in deployment.
     app.run(host="127.0.0.1", port=int(os.getenv("PORT", "8080")), debug=False)
