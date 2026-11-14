@@ -1,0 +1,66 @@
+//@version=5
+strategy("Shotgun", shorttitle="Shotgun", overlay=true, pyramiding=0, process_orders_on_close=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// Apply to a BTC/USD chart on a 1-hour timeframe. TradingView alerts should use
+// {{strategy.order.alert_message}} as their message. Replace the placeholder
+// below with the same webhook secret configured on the server.
+webhookSecret = "REPLACE_WITH_WEBHOOK_SECRET"
+
+// AlphaTrend settings
+coeff = input.float(1.0, "Multiplier", minval=0.1, step=0.1, group="AlphaTrend")
+ap = input.int(14, "Common Period", minval=1, group="AlphaTrend")
+src = input.source(close, "Source", group="AlphaTrend")
+usarRsi = input.bool(false, "Usar RSI em vez de MFI", group="AlphaTrend")
+mostrarSinais = input.bool(true, "Mostrar sinais", group="AlphaTrend")
+
+// Risk settings
+ativarStop = input.bool(true, "Ativar Stop Loss", group="Gestao de Risco")
+stopPercent = input.float(1.0, "Stop Loss (%)", minval=0.1, step=0.1, group="Gestao de Risco")
+ativarAlvo = input.bool(true, "Ativar Take Profit", group="Gestao de Risco")
+alvoPercent = input.float(2.0, "Take Profit (%)", minval=0.1, step=0.1, group="Gestao de Risco")
+fecharContrario = input.bool(true, "Fechar no sinal contrario", group="Gestao de Risco")
+mostrarLinhas = input.bool(true, "Mostrar linhas de SL e TP", group="Gestao de Risco")
+mostrarQuadro = input.bool(true, "Mostrar quadro", group="Quadro")
+
+// AlphaTrend calculation
+atr = ta.sma(ta.tr, ap)
+upTrend = low - atr * coeff
+downTrend = high + atr * coeff
+var float alphaTrend = na
+condicaoAlta = usarRsi ? ta.rsi(src, ap) >= 50 : ta.mfi(hlc3, ap) >= 50
+if condicaoAlta
+    alphaTrend := math.min(upTrend, nz(alphaTrend[1], upTrend))
+else
+    alphaTrend := math.max(downTrend, nz(alphaTrend[1], downTrend))
+
+// Signals
+compraBase = ta.crossover(alphaTrend, alphaTrend[2])
+vendaBase = ta.crossunder(alphaTrend, alphaTrend[2])
+ultimaCompra = ta.barssince(compraBase)
+ultimaVenda = ta.barssince(vendaBase)
+compra = compraBase and (na(ultimaVenda) or ultimaCompra < ultimaVenda)
+venda = vendaBase and (na(ultimaCompra) or ultimaVenda < ultimaCompra)
+
+// Entries and reverse-signal closes. Each filled order sends one webhook action.
+if compra
+    if fecharContrario and strategy.position_size < 0
+        strategy.close("Short", comment="Close short", alert_message='{"secret":"' + webhookSecret + '","action":"close_short"}')
+    strategy.entry("Long", strategy.long, comment="SHOTGUN BUY", alert_message='{"secret":"' + webhookSecret + '","action":"buy"}')
+if venda
+    if fecharContrario and strategy.position_size > 0
+        strategy.close("Long", comment="Close long", alert_message='{"secret":"' + webhookSecret + '","action":"close_long"}')
+    strategy.entry("Short", strategy.short, comment="SHOTGUN SELL", alert_message='{"secret":"' + webhookSecret + '","action":"sell"}')
+
+// Stops and targets are sent as reduce-only close actions when filled.
+entrada = strategy.position_avg_price
+stopLong = entrada * (1.0 - stopPercent / 100.0)
+alvoLong = entrada * (1.0 + alvoPercent / 100.0)
+stopShort = entrada * (1.0 + stopPercent / 100.0)
+alvoShort = entrada * (1.0 - alvoPercent / 100.0)
+if strategy.position_size > 0
+    strategy.exit("Long Exit", from_entry="Long", stop=ativarStop ? stopLong : na, limit=ativarAlvo ? alvoLong : na, comment="Long SL TP", alert_message='{"secret":"' + webhookSecret + '","action":"close_long"}')
+if strategy.position_size < 0
+    strategy.exit("Short Exit", from_entry="Short", stop=ativarStop ? stopShort : na, limit=ativarAlvo ? alvoShort : na, comment="Short SL TP", alert_message='{"secret":"' + webhookSecret + '","action":"close_short"}')
+
+plotshape(mostrarSinais and compra, title="BUY", text="BUY", location=location.belowbar, style=shape.labelup, size=size.tiny, color=color.blue, textcolor=color.white)
+plotshape(mostrarSinais and venda, title="SELL", text="SELL", location=location.abovebar, style=shape.labeldown, size=size.tiny, color=color.maroon, textcolor=color.white)
