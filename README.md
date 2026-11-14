@@ -1,36 +1,36 @@
 # Kraken Shotgun Bot
 
-TradingView **Shotgun** alerts to Kraken Futures, configured for the BTC/USD perpetual (`PI_XBTUSD`) and 1-hour charts.
+TradingView Shotgun alerts to a Kraken Futures BTC/USD perpetual (`PI_XBTUSD`) webhook, intended for a **1-hour** chart. This is a risk-controlled starter, **not a production-ready or guaranteed-safe trading system**. Dry-run mode is the default.
 
-> **Risk:** Futures are leveraged and can cause losses exceeding expectations. This starter is deliberately in dry-run mode. Verify signals, order sizing, contract specifications, and the behavior of your account in Kraken's demo environment before considering live trading. It does not choose leverage or guarantee that orders will match TradingView's simulated fills.
+## Signal alert payload
 
-## Setup
+The Pine strategy sends a JSON message per filled order with `action`, `event_id`, and `reference_price`. In TradingView create a strategy alert for order fills, set its message to `{{strategy.order.alert_message}}`, and webhook URL to `https://YOUR-HOST/webhook`. Keep a private TradingView copy of the Pine script and set its `webhookSecret` input to match the server's `WEBHOOK_SECRET`. Do not publish the script or put Kraken API credentials in TradingView. A secret embedded in an alert payload is a bearer credential: use HTTPS, a long random secret, and rotate it if exposed.
 
-1. Install Python 3.10+ and dependencies: `python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt`.
-2. Copy `.env.example` to `.env`, set a unique `WEBHOOK_SECRET`, and load environment values in your deployment environment. Do not commit `.env` or put Kraken API credentials in TradingView.
-3. Run `python app.py`. Deploy behind HTTPS; TradingView webhooks require a publicly reachable endpoint. `GET /healthz` reports service status.
-4. Add `tradingview/shotgun.pine` to TradingView and apply it to a BTC/USD chart on **1h**.
-5. Create a strategy alert for order fills and set its message to `{{strategy.order.alert_message}}`. Use webhook URL `https://YOUR-HOST/webhook`.
-6. Configure the alert's JSON message with the `secret` field and the action placeholder, for example:
+The alert is for a BTC/USD chart on a 1h timeframe. The webhook accepts only the expected action set. It rejects missing/invalid event IDs and blocks replays using a local SQLite database. Keep that database on persistent storage, back it up, and do not run multiple instances against a local SQLite file on ephemeral disks.
 
-   ```json
-   {"secret":"YOUR_WEBHOOK_SECRET","action":"{{strategy.order.alert_message}}"}
-   ```
+## Install and run
 
-   Instead, the Pine order alert messages already contain JSON action objects; use this TradingView message template (recommended):
+```sh
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+gunicorn --workers 1 --bind 127.0.0.1:8080 app:app
+```
 
-   ```text
-   {{strategy.order.alert_message}}
-   ```
+Place a TLS-terminating reverse proxy in front of the service and restrict inbound traffic to the extent practical. `GET /healthz` reports mode and symbol, but does not check exchange connectivity. Set environment variables using a secret manager or deployment configuration; do not commit `.env`.
 
-   The order alert message in the script must include the secret for authentication. Before enabling alerts, edit the `WEBHOOK_SECRET` placeholder in each Pine `alert_message` to match your `.env` value. Treat the TradingView alert configuration as sensitive.
+## Position sizing and protections
 
-7. Confirm webhook responses report `mode: dry-run` and check logs before any live use.
+For entries, the webhook estimates contracts from configured risk divided by approximate loss per inverse contract (`CONTRACT_VALUE_USD * STOP_LOSS_PCT / 100`). It then clamps size to `MAX_CONTRACTS` and `MAX_ORDER_NOTIONAL_USD`. Size is whole contracts. The signal's reference price is used only for validation; the risk calculation uses inverse contract face value and stop distance. Fees, slippage, funding, gaps, currency conversion and liquidation risk are not included. Verify the instrument's current specifications and independently validate the calculation before use.
 
-## Live orders
+In live mode, before each entry the bot queries the account's open positions and refuses to add to an existing `PI_XBTUSD` position. Before each close, it verifies the actual position side and uses the exchange-reported size with a reduce-only order. It does not automatically reconcile an unknown or mismatched position, and safely rejects rather than guessing. If TradingView sends a close and then an opposite entry, the entry is accepted only if Kraken already reports flat; otherwise it is rejected and needs manual reconciliation/new signal.
 
-Live execution is intentionally opt-in: set `ENABLE_LIVE_TRADING=true` only after testing. Set `KRAKEN_FUTURES_API_KEY`, `KRAKEN_FUTURES_API_SECRET`, and `ORDER_SIZE` in the deployment environment. The API key should have only the required futures trading permissions and no withdrawal permission. Kraken credentials must never be embedded in the Pine script.
+`event_id` deduplication prevents ordinary webhook retries from submitting an order twice. If a process fails after claiming an event, that event stays locked; check Kraken position/order history before any manual recovery. Do not delete the database to retry blindly.
 
-The bot uses a fixed `ORDER_SIZE` in contracts for each alert. `buy`/`sell` submit market orders; `close_long`/`close_short` submit reduce-only market orders. Confirm the contract size and account position before live use. TradingView and exchange positions can diverge if alerts are missed, duplicated, delayed, or rejected; this starter does not reconcile positions or prevent duplicate alerts.
+## Stops, targets, and live trading
 
-For authenticated requests, use Kraken Futures API documentation as the source of truth: <https://docs.kraken.com/exchange/guides/futures/rest> and <https://docs.kraken.com/api/docs/futures-api/>. Test against the current Kraken Futures demo environment before production.
+Pine stop/target exits are **TradingView-triggered market-close alerts**, not exchange-resident stop orders. A webhook outage, alert delay, chart issue, rejected order, or internet outage can leave a position open without its intended stop. Do not rely on these alerts as guaranteed protection. No leverage is set by this app.
+
+Live orders are disabled unless `ENABLE_LIVE_TRADING=true`. Before considering live mode, test the full flow in Kraken's current demo environment; verify the API auth and position response against official documentation, contract value/size, account permissions, alert behavior, and reversal races. Use a dedicated API key with no withdrawal permission. Review exchange state, risk settings, and compliance with local laws. Never paste API secrets into chat or source control.
+
+Official references: <https://docs.kraken.com/exchange/guides/futures/rest>, <https://docs.kraken.com/exchange/guides/futures/introduction>, <https://docs.kraken.com/api/docs/futures-api/>.
