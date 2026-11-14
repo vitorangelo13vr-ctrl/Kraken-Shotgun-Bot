@@ -1,7 +1,7 @@
 //@version=5
 strategy("Shotgun", shorttitle="Shotgun", overlay=true, pyramiding=0, process_orders_on_close=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
 
-// Apply this strategy to a BTC/USD 1-hour chart. In TradingView's strategy
+// Apply this strategy to a BTC/USD 5-minute chart. In TradingView's strategy
 // alert, use {{strategy.order.alert_message}} as the message. Keep this script
 // private and set webhookSecret to match the server environment variable.
 webhookSecret = input.string("REPLACE_WITH_WEBHOOK_SECRET", "Webhook secret", group="Webhook")

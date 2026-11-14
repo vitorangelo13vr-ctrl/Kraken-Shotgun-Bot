@@ -1,12 +1,12 @@
 # Kraken Shotgun Bot
 
-TradingView Shotgun alerts to a Kraken Futures BTC/USD perpetual (`PI_XBTUSD`) webhook, intended for a **1-hour** chart. This is a risk-controlled starter, **not a production-ready or guaranteed-safe trading system**. Dry-run mode is the default.
+TradingView Shotgun alerts to a Kraken Futures BTC/USD perpetual (`PI_XBTUSD`) webhook, intended for a **5-minute** chart. This is a risk-controlled starter, **not a production-ready or guaranteed-safe trading system**. Dry-run mode is the default.
 
 ## Signal alert payload
 
 The Pine strategy sends a JSON message per filled order with `action`, `event_id`, and `reference_price`. In TradingView create a strategy alert for order fills, set its message to `{{strategy.order.alert_message}}`, and webhook URL to `https://YOUR-HOST/webhook`. Keep a private TradingView copy of the Pine script and set its `webhookSecret` input to match the server's `WEBHOOK_SECRET`. Do not publish the script or put Kraken API credentials in TradingView. A secret embedded in an alert payload is a bearer credential: use HTTPS, a long random secret, and rotate it if exposed.
 
-The alert is for a BTC/USD chart on a 1h timeframe. The webhook accepts only the expected action set. It rejects missing/invalid event IDs and blocks replays using a local SQLite database. Keep that database on persistent storage, back it up, and do not run multiple instances against a local SQLite file on ephemeral disks.
+The alert is for a BTC/USD chart on a 5m timeframe. The webhook accepts only the expected action set. It rejects missing/invalid event IDs and blocks replays using a local SQLite database. Keep that database on persistent storage, back it up, and do not run multiple instances against a local SQLite file on ephemeral disks.
 
 ## Install and run
 
